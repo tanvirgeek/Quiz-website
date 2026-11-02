@@ -105,6 +105,21 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 .ri{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:12px 14px;overflow-wrap:anywhere}
 .ri small{color:var(--accent);font-weight:700;margin-right:8px}
 .ri div+div{margin-top:6px;color:var(--good);font-weight:500}
+.mine{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--tint);border:1px solid var(--line);border-left:6px solid var(--accent);border-radius:12px;padding:14px 18px;margin:0 0 14px}
+.mine>div{flex:1 1 260px;min-width:0}
+.mine b{display:block;color:var(--ink);font-size:17px}
+.mine span{color:var(--muted);font-size:14.5px}
+.mine .btn{padding:10px 18px;font-size:16px}
+.mine .btn:disabled{opacity:.45;cursor:default}
+.warn{background:var(--bad-bg);border-left-color:var(--bad)}
+details.bk{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:12px 18px;margin:0 0 28px}
+details.bk summary{cursor:pointer;font-weight:600;color:var(--ink)}
+details.bk p{color:var(--muted);font-size:14.5px;margin:10px 0}
+.bkrow{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+.bkrow .btn{padding:9px 16px;font-size:15px}
+details.bk textarea{width:100%;min-height:80px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:13px/1.4 ui-monospace,Menlo,monospace;padding:8px}
+#bkmsg{font-weight:600;color:var(--good);margin:8px 0 0;font-size:14.5px}
+.saved{color:var(--muted);margin:-6px auto 18px;max-width:46ch}
 @media (prefers-reduced-motion:no-preference){.opt,.tile,.btn{transition:border-color .12s,background .12s}}
 </style>
 
@@ -116,9 +131,38 @@ const DATA=[{"n": 1, "title": "Parts of Speech", "level": "Level 1 · Foundation
 const LEVELS=[["Level 1 · Foundation","Sheets 1 to 10",1,10],["Level 2 · Intermediate","Sheets 11 to 23",11,23],
   ["Level 3 · Advanced","Sheets 24 to 35",24,35],["Level 4 · IELTS Application","Sheets 36 to 40",36,40],["Bonus quizzes","Quantity words, from Sheet 02",41,42]];
 const app=document.getElementById("app");
-let best={};
-try{best=JSON.parse(localStorage.getItem("tanvir-quiz-best")||"{}")||{}}catch(e){best={}}
-function saveBest(n,s){ if((best[n]||0)<s){best[n]=s; try{localStorage.setItem("tanvir-quiz-best",JSON.stringify(best))}catch(e){}} }
+let best={},mist={},meta={};
+function lsGet(k,d){try{return JSON.parse(localStorage.getItem(k)||"null")||d}catch(e){return d}}
+best=lsGet("tanvir-quiz-best",{}); mist=lsGet("tanvir-quiz-mistakes",{}); meta=lsGet("tanvir-quiz-meta",{});
+function idb(w){return new Promise(res=>{try{const r=indexedDB.open("tanvir-quiz",1);r.onupgradeneeded=()=>r.result.createObjectStore("kv");
+  r.onsuccess=()=>{try{const db=r.result,tx=db.transaction("kv",w?"readwrite":"readonly"),st=tx.objectStore("kv"),q=w?st.put(w,"state"):st.get("state");
+  q.onsuccess=()=>{res(q.result||null);db.close()};q.onerror=()=>res(null)}catch(e){res(null)}};r.onerror=()=>res(null)}catch(e){res(null)}})}
+function saveAll(){
+  try{localStorage.setItem("tanvir-quiz-best",JSON.stringify(best));localStorage.setItem("tanvir-quiz-mistakes",JSON.stringify(mist));localStorage.setItem("tanvir-quiz-meta",JSON.stringify(meta))}catch(e){}
+  idb({best,mist,meta});
+}
+function merge(o){ // union of two states: never lose progress
+  if(!o) return false; let ch=false;
+  for(const k in (o.best||{})) if((best[k]||0)<o.best[k]){best[k]=o.best[k];ch=true}
+  for(const k in (o.mist||{})){const a=mist[k],b=o.mist[k]; if(!b||typeof b.w!=="number") continue;
+    if(!a){mist[k]=b;ch=true} else if(b.t>a.t||b.w>a.w){mist[k]={w:Math.max(a.w,b.w),s:b.t>a.t?b.s:a.s,t:Math.max(a.t,b.t)};ch=true}}
+  if(o.meta&&(o.meta.lastBackup||0)>(meta.lastBackup||0)){meta.lastBackup=o.meta.lastBackup}
+  return ch;
+}
+function saveBest(n,s){ if((best[n]||0)<s){best[n]=s; meta.dirty=true; saveAll()} }
+function hsh(t){let h=5381;for(let i=0;i<t.length;i++)h=((h<<5)+h+t.charCodeAt(i))>>>0;return h.toString(36)}
+const keyOf=(n,q)=>n+"."+hsh(q.h+"|"+q.ans);
+const ALLQ={};
+DATA.forEach(sh=>sh.g.forEach(g=>g.q.forEach(q=>{ALLQ[keyOf(sh.n,q)]={q,g}})));
+const liveKeys=()=>Object.keys(mist).filter(k=>ALLQ[k]);
+function record(q,ok){
+  if(!q.key) return; const e=mist[q.key];
+  if(!ok) mist[q.key]={w:(e?e.w:0)+1,s:0,t:Date.now()};
+  else if(e){e.s++;e.t=Date.now(); if(e.s>=2) delete mist[q.key]}
+  meta.dirty=true; saveAll();
+}
+try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
+idb().then(o=>{ if(merge(o)){saveAll(); if(!S&&!document.querySelector(".res")) home()} });
 const pad=n=>String(n).padStart(2,"0");
 const el=(h)=>{const d=document.createElement("div");d.innerHTML=h;return d.firstElementChild};
 let S=null,qs=[],idx=0,res=[],locked=false,revealed=false;
@@ -128,6 +172,7 @@ function home(){
   let h=`<div class="top"><img src="${LOGO}" alt=""><div><b>IELTS &amp; GRE with Tanvir</b><span>BUET</span></div></div>
   <h1>IELTS Grammar Quiz: Road to Band 8</h1>
   <p class="lede">40 quizzes, one for each lecture sheet. Each quiz has 30 questions that match the exercises in the PDF (Sheets 02 to 08 have more: 80, 100, 100, 100, 100, 100 and 100, plus bonus quizzes on quantity words). Choose a sheet to begin.</p>`;
+  h+=minePanel();
   for(const [name,range,a,b] of LEVELS){
     h+=`<section class="level"><h2>${name}<em>${range}</em></h2><div class="grid">`;
     for(const s of DATA.filter(x=>x.n>=a&&x.n<=b)){
@@ -138,11 +183,57 @@ function home(){
   }
   app.innerHTML=h;
   app.querySelectorAll(".tile").forEach(t=>t.onclick=()=>start(+t.dataset.n));
+  wirePanel();
+}
+function due(){const n=liveKeys().length; if(!meta.dirty||!n) return false;
+  return meta.lastBackup?Date.now()-meta.lastBackup>7*864e5:n>=5}
+function minePanel(){
+  const n=liveKeys().length;
+  let h=due()?`<div class="mine warn"><div><b>Your progress is not backed up</b><span>It lives only in this browser. Download a backup so you cannot lose it.</span></div><button class="btn primary" id="dl0">Download backup</button></div>`:"";
+  h+=`<div class="mine"><div><b>My mistakes${n?": "+n+" saved":""}</b><span>${n?"Every question you get wrong is saved here. Answer it correctly twice in a row to clear it.":"Questions you get wrong are saved here so you can practise them later."}</span></div>
+  <button class="btn primary" id="pm"${n?"":" disabled"}>Practise ${Math.min(20,n)||""}</button>${n>20?`<button class="btn" id="pma">All ${n}</button>`:""}</div>
+  <details class="bk"><summary>Backup and restore</summary>
+  <p>Your progress is saved in this browser only. If you clear browsing data or switch device it is lost. Download a backup file now and then, and restore it here any time. Restoring adds to your current progress and never removes it.</p>
+  <div class="bkrow"><button class="btn" id="dl">Download backup file</button><button class="btn" id="rf">Restore from file</button><input type="file" id="fi" accept=".json,application/json" hidden></div>
+  <p>Or use a text code (easy to send to yourself on WhatsApp or Notes):</p>
+  <textarea id="code" placeholder="Press Make code, or paste a code here and press Restore from code" spellcheck="false"></textarea>
+  <div class="bkrow"><button class="btn" id="mk">Make code</button><button class="btn" id="rc">Restore from code</button></div>
+  <div id="bkmsg" role="status"></div>${meta.lastBackup?`<p>Last backup: ${new Date(meta.lastBackup).toLocaleDateString()}</p>`:""}</details>`;
+  return h;
+}
+function backupJSON(){return JSON.stringify({app:"tanvir-ielts-quiz",v:1,saved:new Date().toISOString(),best,mist})}
+function markBackup(){meta.lastBackup=Date.now();meta.dirty=false;saveAll()}
+function importText(t){
+  let o; t=(t||"").trim();
+  try{o=JSON.parse(t)}catch(e){try{o=JSON.parse(decodeURIComponent(escape(atob(t))))}catch(e2){o=null}}
+  if(!o||o.app!=="tanvir-ielts-quiz") return "That is not a valid backup.";
+  merge(o); saveAll();
+  return "Restored. "+liveKeys().length+" mistakes saved, best scores for "+Object.keys(best).length+" quizzes.";
+}
+function wirePanel(){
+  const $=id=>document.getElementById(id), msg=t=>{const m=$("bkmsg"); if(m) m.textContent=t};
+  if($("pm")) $("pm").onclick=()=>startMistakes(false); if($("pma")) $("pma").onclick=()=>startMistakes(true);
+  const dl=()=>{const b=new Blob([backupJSON()],{type:"application/json"}),a=document.createElement("a");
+    a.href=URL.createObjectURL(b);a.download="tanvir-quiz-backup-"+new Date().toISOString().slice(0,10)+".json";document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),2000);markBackup();msg("Backup downloaded. Keep the file somewhere safe, such as Google Drive.")};
+  if($("dl0")) $("dl0").onclick=()=>{dl();home()}; $("dl").onclick=dl;
+  $("rf").onclick=()=>$("fi").click();
+  $("fi").onchange=e=>{const f=e.target.files[0]; if(!f) return; const r=new FileReader();
+    r.onload=()=>{const m=importText(r.result); home(); const d=document.querySelector("details.bk"); if(d){d.open=true;document.getElementById("bkmsg").textContent=m}}; r.readAsText(f)};
+  $("mk").onclick=()=>{const c=btoa(unescape(encodeURIComponent(backupJSON()))); $("code").value=c; $("code").select();
+    try{navigator.clipboard.writeText(c).then(()=>msg("Code copied. Paste it into WhatsApp or Notes."),()=>msg("Select the code above and copy it."))}catch(e){msg("Select the code above and copy it.")} markBackup()};
+  $("rc").onclick=()=>{const m=importText($("code").value); home(); const d=document.querySelector("details.bk"); if(d){d.open=true;document.getElementById("bkmsg").textContent=m}};
+}
+function startMistakes(all){
+  const ks=liveKeys().sort((a,b)=>(mist[b].w-mist[a].w)||(mist[a].t-mist[b].t)); if(!ks.length) return;
+  S={n:0,mode:"mistakes",tag:"MY MISTAKES",title:"Practise what you missed",g:[]};
+  qs=(all?ks:ks.slice(0,20)).map(k=>({...ALLQ[k].q,g:ALLQ[k].g,key:k}));
+  idx=0; res=qs.map(()=>null); render(); window.scrollTo(0,0);
 }
 
 function start(n){
   S=DATA.find(x=>x.n===n); qs=[];
-  S.g.forEach(g=>g.q.forEach(q=>qs.push({...q,g})));
+  S.g.forEach(g=>g.q.forEach(q=>qs.push({...q,g,key:keyOf(n,q)})));
   idx=0; res=qs.map(()=>null); render(); window.scrollTo(0,0);
 }
 
@@ -180,7 +271,7 @@ function nextBtn(){
 }
 function pick(i){
   if(locked) return; locked=true;
-  const q=qs[idx], ok=i===q.a; res[idx]=ok;
+  const q=qs[idx], ok=i===q.a; res[idx]=ok; record(q,ok);
   app.querySelectorAll(".opt").forEach((b,k)=>{b.disabled=true; if(k===q.a)b.classList.add("right"); else if(k===i)b.classList.add("wrong"); else b.classList.add("dim");});
   const bl=app.querySelector("[data-blank]"); if(bl){bl.innerHTML=q.opts[q.a]; bl.classList.add("ok");}
   const [m,n]=note(q.ans);
@@ -188,7 +279,7 @@ function pick(i){
   const mine=(!ok&&q.opts)?`<span class="pk">You chose: <b>${q.opts[i]}</b></span>`:"";
   document.getElementById("fb").innerHTML=ok
     ?`<div class="fb ok"><b class="lab">Correct</b>${q.x?"":m}${q.x?"<b>"+m+"</b>":""}${(!q.x&&n)?" "+n:""}${why}</div>`
-    :`<div class="fb no"><b class="lab">Not quite</b>${mine}Correct answer: <b>${m}</b>${q.x?"":(n?" "+n:"")}${why}</div>`;
+    :`<div class="fb no"><b class="lab">Not quite</b>${mine}<span class="pk"><i>Saved to My mistakes.</i></span>Correct answer: <b>${m}</b>${q.x?"":(n?" "+n:"")}${why}</div>`;
   document.getElementById("act").innerHTML=nextBtn();
   document.getElementById("next").onclick=advance;
   document.getElementById("next").focus({preventScroll:true});
@@ -202,7 +293,7 @@ function reveal(){
   document.getElementById("miss").onclick=()=>mark(false);
 }
 function mark(ok){
-  if(res[idx]!==null&&locked) return; locked=true; res[idx]=ok; updateSegs();
+  if(res[idx]!==null&&locked) return; locked=true; res[idx]=ok; record(qs[idx],ok); updateSegs();
   document.getElementById("act").innerHTML=nextBtn();
   document.getElementById("next").onclick=advance;
   document.getElementById("next").focus({preventScroll:true});
@@ -211,14 +302,15 @@ function updateSegs(){const s=app.querySelector(".segs"); if(s) s.innerHTML=segs
 function advance(){ if(idx<qs.length-1){idx++;render();window.scrollTo(0,0)} else finish(); }
 
 function finish(){
-  const score=res.filter(r=>r===true).length; saveBest(S.n,score);
+  const score=res.filter(r=>r===true).length; if(!S.mode) saveBest(S.n,score);
   const pct=score/qs.length;
   const v=pct>=0.85?"Excellent. You are ready for the next sheet.":pct>=0.65?"Good. Revise the rules and retry the ones you missed.":"Re-watch the lecture, study the sheet again, then retry.";
   const missed=qs.map((q,i)=>[q,i]).filter(([q,i])=>res[i]!==true);
   let h=`<div class="bar"><div class="bar-row"><button class="back" id="back">All quizzes</button>
     <div class="bar-title"><small>${S.tag||"SHEET "+pad(S.n)}</small>${S.title}</div><div class="count">Done</div></div></div>
   <div class="res"><div class="big">${score}<small> / ${qs.length}</small></div><p class="verdict">${v}</p>
-  <div class="act"><button class="btn primary" id="retry">Try again</button>${S.n<40?`<button class="btn" id="nx">Next quiz</button>`:""}<button class="btn" id="all">All quizzes</button></div>`;
+  ${S.mode?`<p class="saved">${liveKeys().length} still in My mistakes.</p>`:(missed.length?`<p class="saved">${missed.length} saved to My mistakes for later practice.</p>`:"")}
+  <div class="act">${S.mode?(liveKeys().length?`<button class="btn primary" id="retry">Practise again</button>`:""):`<button class="btn primary" id="retry">Try again</button>`}${(!S.mode&&S.n<40)?`<button class="btn" id="nx">Next quiz</button>`:""}${(!S.mode&&missed.length)?`<button class="btn" id="pm2">Practise my mistakes</button>`:""}<button class="btn" id="all">All quizzes</button></div>`;
   if(missed.length){
     h+=`<div class="rev"><h3>Review: ${missed.length} to revisit</h3>`+missed.map(([q,i])=>{
       const [m]=note(q.ans);
@@ -227,7 +319,8 @@ function finish(){
   }
   h+=`</div>`; app.innerHTML=h; window.scrollTo(0,0);
   document.getElementById("back").onclick=home; document.getElementById("all").onclick=home;
-  document.getElementById("retry").onclick=()=>start(S.n);
+  const rt=document.getElementById("retry"); if(rt) rt.onclick=()=>S.mode?startMistakes(false):start(S.n);
+  const p2=document.getElementById("pm2"); if(p2) p2.onclick=()=>startMistakes(false);
   const nx=document.getElementById("nx"); if(nx) nx.onclick=()=>start(S.n+1);
 }
 
@@ -241,5 +334,5 @@ document.addEventListener("keydown",e=>{
   if(locked&&(k==="Enter"||k==="ArrowRight")){advance();e.preventDefault()}
 });
 const h0=(location.hash||"").match(/^#s(\d+)$/);
-if(h0&&DATA.find(x=>x.n===+h0[1])) start(+h0[1]); else home();
+if(h0&&DATA.find(x=>x.n===+h0[1])) start(+h0[1]); else if(location.hash==="#mistakes"&&liveKeys().length) startMistakes(false); else home();
 </script>
